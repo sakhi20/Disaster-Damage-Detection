@@ -120,12 +120,9 @@ python scripts/train.py --config configs/prithvi_finetune.yaml --wandb
 
 ## Team
 
-| Name | Role |
-|------|------|
-| [Team Member 1] | Model architecture & training |
-| [Team Member 2] | Data pipeline & preprocessing |
-| [Team Member 3] | Evaluation & analysis |
-| [Team Member 4] | Visualization & paper writing |
+- Sakhi Patel
+- Vivek Vanera
+- Mulya Patel
 
 ---
 
