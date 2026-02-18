@@ -118,6 +118,16 @@ python scripts/train.py --config configs/prithvi_finetune.yaml --wandb
 
 ---
 
+## Future Directions: SAR Integration
+
+We are extending this framework to include **Synthetic Aperture Radar (SAR)** imagery for robust, all-weather disaster monitoring.
+
+- **All-Weather Monitoring:** Unlike optical sensors, SAR can see through clouds, smoke, and darkness, which is critical during active weather events.
+- **Multi-Modal Fusion:** We are developing architectures to fuse optical imagery with SAR data to improve damage detection reliability.
+- **Academic Collaboration:** This direction is being developed in collaboration with **Prof. Mikhail Gilman (NCSU Mathematics)**, leveraging his expertise in high-frequency SAR and multi-view geometry.
+
+---
+
 ## Team
 
 - Sakhi Patel
