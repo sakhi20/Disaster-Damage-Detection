@@ -1,0 +1,41 @@
+# Prithvi fine-tuning configuration
+
+model:
+  name: prithvi_finetune
+  backbone: prithvi_100m
+  pretrained_weights: weights/prithvi_100m.pt
+  num_classes: 4
+  use_pre_post: true          # concatenate pre+post images (6 channels)
+  freeze_backbone: false
+  dropout: 0.1
+
+data:
+  root_dir: data/xbd
+  batch_size: 32
+  num_workers: 4
+  image_size: 224
+  augmentation: true
+
+training:
+  epochs: 50
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine
+  warmup_epochs: 5
+  gradient_clip: 1.0
+  early_stopping_patience: 10
+
+loss:
+  type: cross_entropy
+  class_weights: [0.5, 1.5, 2.0, 2.5]   # upweight rare damage classes
+
+logging:
+  wandb: true
+  project: disaster-response-ai
+  run_name: prithvi_finetune_v1
+  log_every_n_steps: 50
+
+output:
+  checkpoint_dir: checkpoints/prithvi_finetune
+  results_dir: results/prithvi_finetune

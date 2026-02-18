@@ -1,0 +1,51 @@
+% Main paper LaTeX file
+% Compile with: pdflatex main.tex
+
+\documentclass[10pt,twocolumn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{cite}
+
+\title{Disaster Response Building Damage Detection\\
+       with Geospatial Foundation Models}
+
+\author{Author 1 \and Author 2 \and Author 3 \and Author 4}
+
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We present a comparative study of geospatial foundation models and Vision Transformers
+for post-disaster building damage detection using the xBD dataset. Our approach
+fine-tunes NASA's Prithvi-100M model on bi-temporal satellite imagery to classify
+building damage into four severity categories. We compare against standard ViT and
+CNN baselines, demonstrating the value of geospatial pre-training for disaster response.
+\end{abstract}
+
+\section{Introduction}
+% TODO
+
+\section{Related Work}
+% TODO
+
+\section{Dataset}
+% TODO: xBD description
+
+\section{Methodology}
+% TODO: Model architectures
+
+\section{Experiments}
+% TODO: Results tables
+
+\section{Conclusion}
+% TODO
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}
