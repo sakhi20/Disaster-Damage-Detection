@@ -1,149 +1,61 @@
-# Disaster Response AI: Building Damage Detection with Prithvi & Vision Transformers
+# Label-Efficient Disaster Response Using Foundation Models
 
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+**Authors:** Sakhi Patel · Vivek Vanera · Mulya Patel  
+**Date:** February 19, 2026
 
-## Overview
+## 🚨 The Problem: Disasters Strike, But Labels Take Days
 
-This project develops a post-disaster building damage detection system using the **xBD dataset** and state-of-the-art geospatial foundation models. We leverage **NASA's Prithvi foundation model** (a geospatial Vision Transformer pre-trained on Harmonized Landsat Sentinel-2 imagery) alongside fine-tuned Vision Transformer (ViT) architectures to classify building damage from satellite imagery captured before and after natural disasters.
+Disaster damage assessment relies on manually labeled satellite/drone imagery, which is slow, expensive, and requires domain experts.
 
-### Key Contributions
-- Fine-tuning Prithvi (geospatial foundation model) on xBD building damage classification
-- Comparative study: Prithvi vs. standard ViT vs. CNN baselines
-- Bi-temporal change detection using pre/post-disaster image pairs
-- Evaluation on diverse disaster types (hurricanes, wildfires, floods, earthquakes)
+*   **Labeling thousands of images takes days to weeks**
+*   The process is time-consuming and mentally exhausting
+*   Not scalable during emergency situations
+*   Delays critical relief planning and resource allocation
 
----
-
-## Dataset: xBD
-
-The [xBD dataset](https://xview2.org/) contains:
-- **~850,000** building polygons across **19 disaster events**
-- Satellite imagery at ~0.3m/pixel resolution
-- 4-class damage labels: `no-damage`, `minor-damage`, `major-damage`, `destroyed`
-- Pre/post-disaster image pairs in GeoTIFF format
+**Goal:** Develop methods that learn effectively from minimal labeled data, enabling faster, scalable, and reliable disaster response.
 
 ---
 
-## Project Structure
+## 🚀 Our Approach: Two-Phase Pipeline
 
-```
-project/
-├── data/                   # xBD dataset (gitignored)
-├── models/                 # Model implementations
-│   ├── prithvi/            # Prithvi foundation model wrappers
-│   ├── vit/                # Vision Transformer implementations
-│   └── baselines/          # CNN baseline models
-├── experiments/            # Experiment runner scripts
-├── utils/                  # Shared utilities
-│   ├── data_loader.py      # xBD dataset loading
-│   ├── metrics.py          # Evaluation metrics
-│   └── visualization.py    # Result visualization
-├── configs/                # YAML configuration files
-├── notebooks/              # Jupyter exploration notebooks
-├── scripts/                # Training & evaluation scripts
-├── results/                # Outputs (gitignored)
-└── paper/                  # LaTeX paper files
-```
+### Phase 1: Foundational Feature Learning (Transfer Learning)
+*   **Model:** NASA's **Prithvi-100M** (Geospatial Foundation Model)
+*   **Method:** Fine-tune on bi-temporal satellite imagery to classify structural components (Roof, Building, etc.).
+*   **Objective:** Learn strong spatial and structural representations with minimal labeled data.
+
+### Phase 2: Damage Detection via Comparative Analysis
+*   **Model:** Vision Transformer (ViT) architecture.
+*   **Input:** Before and After disaster satellite images.
+*   **Method:** Initialize with weights learned in Phase 1 and perform comparative analysis to detect structural damage.
+*   **Constraint:** Use only **10% labels** to achieve superior results.
 
 ---
 
-## Setup
+## 📊 Current Progress
 
-### Prerequisites
-- Python 3.9+
-- CUDA 11.8+ (for GPU training)
-- Conda (recommended)
+We have implemented and benchmarked leading change detection architectures:
+1.  **Siamese U-Net:** Dual-branch encoder-decoder for pixel-level change mapping.
+2.  **SpaU-Net:** Specialized attention mechanisms to focus on critical damage regions.
 
-### Option 1: Conda Environment (Recommended)
-
-```bash
-conda env create -f environment.yml
-conda activate disaster-response-ai
-```
-
-### Option 2: pip
-
-```bash
-pip install -r requirements.txt
-```
-
-### Download Prithvi Weights
-
-```bash
-# Download from HuggingFace
-python scripts/download_prithvi.py
-```
+### Preliminary Results (xBD Dataset)
+*   Implemented both architectures.
+*   Evaluated under label-constrained settings.
+*   Current focus: Hyperparameter optimization and full dataset training.
 
 ---
 
-## Quick Start
+## 📡 Future Directions: SAR Integration
 
-### Training
+**Why SAR?** Synthetic Aperture Radar (SAR) penetrates clouds and smoke, providing all-weather imaging.
 
-```bash
-# Train Prithvi fine-tuned model
-python scripts/train.py --config configs/prithvi_finetune.yaml
-
-# Train ViT baseline
-python scripts/train.py --config configs/vit_baseline.yaml
-```
-
-### Evaluation
-
-```bash
-python scripts/evaluate.py --config configs/prithvi_finetune.yaml --checkpoint checkpoints/best_model.pth
-```
-
-### Experiment Tracking
-
-We use [Weights & Biases](https://wandb.ai/) for experiment tracking:
-
-```bash
-wandb login
-python scripts/train.py --config configs/prithvi_finetune.yaml --wandb
-```
+**Integration Plan:**
+*   Combine SAR + Optical imagery for richer feature representation.
+*   Feed SAR data into Phase 1 transfer-learning model.
+*   Enhance Phase 2 Comparative Analysis for better robustness under challenging conditions.
 
 ---
 
-## Models
-
-| Model | Backbone | Pre-training | Params |
-|-------|----------|-------------|--------|
-| Prithvi-100M | ViT-L | HLS Satellite (NASA) | 100M |
-| ViT-B/16 | ViT-B | ImageNet-21k | 86M |
-| ResNet-50 | CNN | ImageNet | 25M |
-| Swin-T | Swin | ImageNet-22k | 28M |
-
----
-
-## Future Directions: SAR Integration
-
-We are extending this framework to include **Synthetic Aperture Radar (SAR)** imagery for robust, all-weather disaster monitoring.
-
-- **All-Weather Monitoring:** Unlike optical sensors, SAR can see through clouds, smoke, and darkness, which is critical during active weather events.
-- **Multi-Modal Fusion:** We are developing architectures to fuse optical imagery with SAR data to improve damage detection reliability.
-- **Academic Collaboration:** This direction is being developed in collaboration with **Prof. Mikhail Gilman (NCSU Mathematics)**, leveraging his expertise in high-frequency SAR and multi-view geometry.
-
----
-
-## Team
-
-- Sakhi Patel
-- Vivek Vanera
-- Mulya Patel
-
----
-
-## References
-
-- Prithvi: [HuggingFace Model Card](https://huggingface.co/ibm-nasa-geospatial/Prithvi-100M)
-- xBD Dataset: [xView2 Challenge](https://xview2.org/)
-- xBD Paper: Gupta et al., "Creating xBD: A Dataset for Assessing Building Damage from Satellite Imagery" (CVPR 2019)
-
----
-
-## License
-
-MIT License — see [LICENSE](LICENSE) for details.
+## 📚 References
+*   Wang, Q., et al. (2023). *High-Resolution Remote Sensing Image Change Detection Method Based on Improved Siamese U-Net*. Remote Sensing.
+*   Yu, et al. (2024). *Benchmarking Attention Mechanisms and Consistency Regularization for Post-Flood Building Damage Assessment*. arXiv.
+*   NASA Prithvi Model: [huggingface.co/ibm-nasa-geospatial/Prithvi-100M](https://huggingface.co/ibm-nasa-geospatial/Prithvi-100M)

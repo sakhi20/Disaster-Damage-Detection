@@ -1,22 +1,29 @@
 """
-Baseline ResNet-18 Training Script for xBD Building Damage Detection
-=====================================================================
-Trains a ResNet-18 classifier on a small subset of xBD data.
-Target: ~1-2 hours on CPU, much faster on GPU.
+ResNet-18 Baseline Training Script — xBD Building Damage Detection
+===================================================================
+Trains a ResNet-18 classifier on a subset of the xBD dataset.
+One sample per post-disaster tile; label = majority damage class in tile.
 
 Usage:
     python scripts/train_baseline.py
-    python scripts/train_baseline.py --data_dir data/xbd --epochs 10 --subset 1000
-    python scripts/train_baseline.py --demo   # runs with synthetic data (no xBD needed)
+    python scripts/train_baseline.py --data_dir data/xbd --epochs 10 \
+        --train_subset 1000 --val_subset 200
 
-xBD Data Setup (if not yet extracted):
+Expected xBD directory structure:
+    data/xbd/
+    ├── train/
+    │   ├── images/   *_pre_disaster.png  *_post_disaster.png
+    │   └── labels/   *_post_disaster.json
+    ├── hold/          (validation split)
+    │   ├── images/
+    │   └── labels/
+    └── test/
+        ├── images/
+        └── labels/
+
+Extraction (run once before training):
     cat data/xview2_geotiff.tgz.part-* > data/xview2_geotiff.tgz
     tar -xzf data/xview2_geotiff.tgz -C data/
-    # Expected structure after extraction:
-    # data/xbd/train/images/*.png
-    # data/xbd/train/labels/*.json
-    # data/xbd/hold/images/*.png
-    # data/xbd/hold/labels/*.json
 """
 
 import argparse
@@ -40,23 +47,32 @@ NUM_CLASSES = 4
 LABEL_MAP = {name: i for i, name in enumerate(DAMAGE_CLASSES)}
 IMG_SIZE = 224
 
+# ImageNet normalization (ResNet pretrained stats)
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD  = [0.229, 0.224, 0.225]
+
 
 # ─── Dataset ──────────────────────────────────────────────────────────────────
-class XBDPatchDataset(Dataset):
+class XBDTileDataset(Dataset):
     """
-    Loads individual building crops from xBD PNG images + JSON labels.
-    Each JSON feature = one building polygon → one sample.
-    For speed, we use the full tile image and the bounding box of each polygon.
+    PyTorch Dataset for xBD post-disaster tiles.
+
+    Each sample is one post-disaster PNG tile. The label is the majority
+    damage class among all building polygons annotated in the tile's JSON.
+
+    Args:
+        samples:   List of (image_path: str, label: int) tuples.
+        transform: torchvision transforms applied to each PIL image.
     """
 
-    def __init__(self, samples, transform=None):
-        self.samples = samples   # list of (img_path, label_int)
+    def __init__(self, samples: list, transform=None):
+        self.samples = samples
         self.transform = transform
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
         img_path, label = self.samples[idx]
         img = Image.open(img_path).convert("RGB")
         if self.transform:
@@ -64,84 +80,88 @@ class XBDPatchDataset(Dataset):
         return img, label
 
 
-class SyntheticXBDDataset(Dataset):
-    """Synthetic dataset for demo/testing without real xBD data."""
-
-    def __init__(self, n_samples=1000, transform=None):
-        self.n = n_samples
-        self.transform = transform
-        # Simulate class imbalance similar to xBD
-        weights = [0.55, 0.20, 0.15, 0.10]
-        self.labels = np.random.choice(4, size=n_samples, p=weights).tolist()
-
-    def __len__(self):
-        return self.n
-
-    def __getitem__(self, idx):
-        # Random RGB image (simulates satellite patch)
-        arr = np.random.randint(0, 255, (IMG_SIZE, IMG_SIZE, 3), dtype=np.uint8)
-        img = Image.fromarray(arr)
-        if self.transform:
-            img = self.transform(img)
-        return img, self.labels[idx]
-
-
-# ─── Data Loading ─────────────────────────────────────────────────────────────
-def collect_samples_from_xbd(data_dir: Path, split: str, max_samples: int):
+# ─── Data Collection ──────────────────────────────────────────────────────────
+def collect_samples(data_dir: Path, split: str, max_samples: int) -> list:
     """
-    Walk xBD split directory and collect (image_path, label) pairs.
-    One sample per tile image (uses the majority damage class in that tile).
+    Scan an xBD split directory and return (image_path, label) pairs.
+
+    Args:
+        data_dir:    Root of extracted xBD dataset (contains train/hold/test).
+        split:       One of 'train', 'hold', 'test'.
+        max_samples: Maximum number of tiles to load.
+
+    Returns:
+        List of (str, int) tuples — (post-disaster image path, damage label).
+
+    Raises:
+        FileNotFoundError: If the split directory does not exist.
     """
     images_dir = data_dir / split / "images"
     labels_dir = data_dir / split / "labels"
 
     if not images_dir.exists():
         raise FileNotFoundError(
-            f"\n[ERROR] xBD images not found at: {images_dir}\n"
-            f"  → Have you extracted the dataset? Run:\n"
-            f"      cat data/xview2_geotiff.tgz.part-* > data/xview2_geotiff.tgz\n"
-            f"      tar -xzf data/xview2_geotiff.tgz -C data/\n"
-            f"  → Or run with --demo flag to use synthetic data:\n"
-            f"      python scripts/train_baseline.py --demo\n"
+            f"\n[ERROR] Directory not found: {images_dir}\n"
+            f"  Ensure the xBD dataset has been extracted to: {data_dir}\n"
+            f"  Extraction commands:\n"
+            f"    cat data/xview2_geotiff.tgz.part-* > data/xview2_geotiff.tgz\n"
+            f"    tar -xzf data/xview2_geotiff.tgz -C data/\n"
         )
 
+    post_tiles = sorted(images_dir.glob("*_post_disaster.png"))
+    if not post_tiles:
+        raise FileNotFoundError(
+            f"[ERROR] No post-disaster PNG files found in {images_dir}"
+        )
+
+    print(f"  Found {len(post_tiles)} post-disaster tiles in '{split}' split")
+
     samples = []
-    post_images = sorted(images_dir.glob("*_post_disaster.png"))
+    skipped = 0
 
-    print(f"  Found {len(post_images)} post-disaster tiles in '{split}' split")
-
-    for img_path in post_images[:max_samples]:
+    for img_path in post_tiles[:max_samples]:
         stem = img_path.stem.replace("_post_disaster", "")
         label_path = labels_dir / f"{stem}_post_disaster.json"
 
         if not label_path.exists():
+            skipped += 1
             continue
 
-        # Parse JSON to get dominant damage class for this tile
-        try:
-            with open(label_path) as f:
-                data = json.load(f)
-            labels_in_tile = []
-            for feat in data.get("features", {}).get("xy", []):
-                subtype = feat.get("properties", {}).get("subtype", "no-damage")
-                if subtype in LABEL_MAP:
-                    labels_in_tile.append(LABEL_MAP[subtype])
-            if not labels_in_tile:
-                label_int = 0
-            else:
-                # Use majority class for the tile
-                label_int = int(np.bincount(labels_in_tile).argmax())
-        except Exception:
-            label_int = 0
+        label = _majority_label(label_path)
+        samples.append((str(img_path), label))
 
-        samples.append((str(img_path), label_int))
+    if skipped:
+        print(f"  Skipped {skipped} tiles (missing label files)")
 
     return samples
 
 
+def _majority_label(label_path: Path) -> int:
+    """Parse xBD JSON and return the majority damage class index for the tile."""
+    try:
+        with open(label_path) as f:
+            data = json.load(f)
+        labels = [
+            LABEL_MAP[feat["properties"]["subtype"]]
+            for feat in data.get("features", {}).get("xy", [])
+            if feat.get("properties", {}).get("subtype") in LABEL_MAP
+        ]
+        return int(np.bincount(labels).argmax()) if labels else 0
+    except (json.JSONDecodeError, KeyError, ValueError):
+        return 0  # default to no-damage on parse error
+
+
+def _class_distribution(samples: list) -> str:
+    counts = np.bincount([s[1] for s in samples], minlength=NUM_CLASSES)
+    return "  ".join(f"{DAMAGE_CLASSES[i]}={counts[i]}" for i in range(NUM_CLASSES))
+
+
 # ─── Model ────────────────────────────────────────────────────────────────────
-def build_model(num_classes: int = NUM_CLASSES) -> nn.Module:
-    """ResNet-18 pretrained on ImageNet, final FC replaced for damage classes."""
+def build_resnet18(num_classes: int = NUM_CLASSES) -> nn.Module:
+    """
+    ResNet-18 pretrained on ImageNet-1K.
+    Final FC layer replaced with Dropout + Linear for `num_classes` outputs.
+    """
     model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
     in_features = model.fc.in_features
     model.fc = nn.Sequential(
@@ -151,8 +171,8 @@ def build_model(num_classes: int = NUM_CLASSES) -> nn.Module:
     return model
 
 
-# ─── Training ─────────────────────────────────────────────────────────────────
-def train_one_epoch(model, loader, optimizer, criterion, device, epoch):
+# ─── Training & Evaluation ────────────────────────────────────────────────────
+def train_one_epoch(model, loader, optimizer, criterion, device):
     model.train()
     total_loss, correct, total = 0.0, 0, 0
 
@@ -170,15 +190,12 @@ def train_one_epoch(model, loader, optimizer, criterion, device, epoch):
         correct += (preds == labels).sum().item()
         total += imgs.size(0)
 
-        # Print batch progress every 10 batches
         if (batch_idx + 1) % 10 == 0:
             batch_acc = (preds == labels).float().mean().item()
-            print(f"    Batch [{batch_idx+1}/{len(loader)}]  "
-                  f"loss={loss.item():.4f}  batch_acc={batch_acc:.3f}")
+            print(f"    Batch [{batch_idx+1:>3}/{len(loader)}]  "
+                  f"loss={loss.item():.4f}  acc={batch_acc:.3f}")
 
-    avg_loss = total_loss / total
-    accuracy = correct / total
-    return avg_loss, accuracy
+    return total_loss / total, correct / total
 
 
 @torch.no_grad()
@@ -199,166 +216,160 @@ def evaluate(model, loader, criterion, device):
         all_preds.extend(preds.cpu().tolist())
         all_labels.extend(labels.cpu().tolist())
 
-    avg_loss = total_loss / total
-    accuracy = correct / total
-
-    # Per-class accuracy
     per_class = {}
-    for cls_idx, cls_name in enumerate(DAMAGE_CLASSES):
-        mask = [l == cls_idx for l in all_labels]
-        if sum(mask) > 0:
-            cls_correct = sum(p == l for p, l in zip(all_preds, all_labels) if l == cls_idx)
-            per_class[cls_name] = cls_correct / sum(mask)
+    for i, name in enumerate(DAMAGE_CLASSES):
+        indices = [j for j, l in enumerate(all_labels) if l == i]
+        if indices:
+            per_class[name] = sum(all_preds[j] == i for j in indices) / len(indices)
 
-    return avg_loss, accuracy, per_class
+    return total_loss / total, correct / total, per_class
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
+def parse_args():
+    p = argparse.ArgumentParser(description="ResNet-18 baseline for xBD damage detection")
+    p.add_argument("--data_dir",      type=str,   default="data/xbd")
+    p.add_argument("--epochs",        type=int,   default=10)
+    p.add_argument("--batch_size",    type=int,   default=32)
+    p.add_argument("--lr",            type=float, default=1e-3)
+    p.add_argument("--weight_decay",  type=float, default=1e-4)
+    p.add_argument("--train_subset",  type=int,   default=1000,
+                   help="Max training tiles (use -1 for full dataset)")
+    p.add_argument("--val_subset",    type=int,   default=200,
+                   help="Max validation tiles (use -1 for full dataset)")
+    p.add_argument("--num_workers",   type=int,   default=4)
+    p.add_argument("--save_path",     type=str,   default="results/baseline_resnet18.pth")
+    p.add_argument("--seed",          type=int,   default=42)
+    return p.parse_args()
+
+
+def set_seed(seed: int):
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="ResNet-18 baseline for xBD damage detection")
-    parser.add_argument("--data_dir", type=str, default="data/xbd",
-                        help="Path to extracted xBD dataset root")
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--train_subset", type=int, default=1000,
-                        help="Max training tiles to use")
-    parser.add_argument("--val_subset", type=int, default=200,
-                        help="Max validation tiles to use")
-    parser.add_argument("--num_workers", type=int, default=2)
-    parser.add_argument("--demo", action="store_true",
-                        help="Use synthetic data (no xBD needed) for quick demo")
-    parser.add_argument("--save_path", type=str, default="results/baseline_resnet18.pth")
-    args = parser.parse_args()
+    args = parse_args()
+    set_seed(args.seed)
 
-    # ── Setup ──────────────────────────────────────────────────────────────────
-    print("=" * 60)
-    print("  ResNet-18 Baseline — xBD Building Damage Detection")
-    print("=" * 60)
-
+    # ── Device ─────────────────────────────────────────────────────────────────
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"  Device      : {device}")
-    if device.type == "cuda":
-        print(f"  GPU         : {torch.cuda.get_device_name(0)}")
-    print(f"  Epochs      : {args.epochs}")
-    print(f"  Batch size  : {args.batch_size}")
-    print(f"  LR          : {args.lr}")
-    print(f"  Train subset: {args.train_subset}")
-    print(f"  Val subset  : {args.val_subset}")
-    print(f"  Demo mode   : {args.demo}")
-    print("=" * 60)
+
+    print("=" * 62)
+    print("  ResNet-18 Baseline — xBD Building Damage Detection")
+    print("=" * 62)
+    print(f"  Device       : {device}" +
+          (f" ({torch.cuda.get_device_name(0)})" if device.type == "cuda" else ""))
+    print(f"  Data dir     : {Path(args.data_dir).resolve()}")
+    print(f"  Epochs       : {args.epochs}")
+    print(f"  Batch size   : {args.batch_size}")
+    print(f"  LR           : {args.lr}")
+    print(f"  Train subset : {args.train_subset if args.train_subset > 0 else 'full'}")
+    print(f"  Val subset   : {args.val_subset if args.val_subset > 0 else 'full'}")
+    print(f"  Save path    : {args.save_path}")
+    print("=" * 62)
 
     # ── Transforms ─────────────────────────────────────────────────────────────
     train_transform = T.Compose([
         T.Resize((IMG_SIZE, IMG_SIZE)),
         T.RandomHorizontalFlip(),
         T.RandomVerticalFlip(),
+        T.RandomRotation(degrees=15),
         T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1),
         T.ToTensor(),
-        T.Normalize(mean=[0.485, 0.456, 0.406],
-                    std=[0.229, 0.224, 0.225]),
+        T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
     ])
 
     val_transform = T.Compose([
         T.Resize((IMG_SIZE, IMG_SIZE)),
         T.ToTensor(),
-        T.Normalize(mean=[0.485, 0.456, 0.406],
-                    std=[0.229, 0.224, 0.225]),
+        T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
     ])
 
-    # ── Dataset ────────────────────────────────────────────────────────────────
-    if args.demo:
-        print("\n[DEMO MODE] Using synthetic data (no real xBD needed)")
-        train_ds = SyntheticXBDDataset(n_samples=args.train_subset, transform=train_transform)
-        val_ds   = SyntheticXBDDataset(n_samples=args.val_subset,   transform=val_transform)
-    else:
-        data_dir = Path(args.data_dir)
-        print(f"\n[INFO] Loading xBD data from: {data_dir.resolve()}")
+    # ── Data ───────────────────────────────────────────────────────────────────
+    data_dir = Path(args.data_dir)
+    max_train = args.train_subset if args.train_subset > 0 else 10**9
+    max_val   = args.val_subset   if args.val_subset   > 0 else 10**9
 
-        print("[INFO] Collecting training samples...")
-        train_samples = collect_samples_from_xbd(data_dir, "train", args.train_subset)
-        print(f"  → {len(train_samples)} training samples collected")
+    print("\n[INFO] Loading training samples...")
+    train_samples = collect_samples(data_dir, "train", max_train)
+    print(f"  → {len(train_samples)} samples  |  {_class_distribution(train_samples)}")
 
-        print("[INFO] Collecting validation samples...")
-        val_samples = collect_samples_from_xbd(data_dir, "hold", args.val_subset)
-        print(f"  → {len(val_samples)} validation samples collected")
+    print("[INFO] Loading validation samples...")
+    val_samples = collect_samples(data_dir, "hold", max_val)
+    print(f"  → {len(val_samples)} samples  |  {_class_distribution(val_samples)}")
 
-        # Print class distribution
-        for split_name, samples in [("Train", train_samples), ("Val", val_samples)]:
-            counts = np.bincount([s[1] for s in samples], minlength=4)
-            dist = "  ".join(f"{DAMAGE_CLASSES[i]}={counts[i]}" for i in range(4))
-            print(f"  {split_name} class dist: {dist}")
+    train_ds = XBDTileDataset(train_samples, transform=train_transform)
+    val_ds   = XBDTileDataset(val_samples,   transform=val_transform)
 
-        train_ds = XBDPatchDataset(train_samples, transform=train_transform)
-        val_ds   = XBDPatchDataset(val_samples,   transform=val_transform)
-
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size,
-                              shuffle=True, num_workers=args.num_workers,
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+                              num_workers=args.num_workers,
                               pin_memory=(device.type == "cuda"))
-    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size,
-                              shuffle=False, num_workers=args.num_workers,
+    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False,
+                              num_workers=args.num_workers,
                               pin_memory=(device.type == "cuda"))
 
-    print(f"\n[INFO] Train batches: {len(train_loader)} | Val batches: {len(val_loader)}")
+    print(f"\n  Train batches: {len(train_loader)}  |  Val batches: {len(val_loader)}")
 
     # ── Model ──────────────────────────────────────────────────────────────────
-    print("\n[INFO] Building ResNet-18 model (ImageNet pretrained)...")
-    model = build_model(NUM_CLASSES).to(device)
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"  Total params    : {total_params:,}")
-    print(f"  Trainable params: {trainable_params:,}")
+    print("\n[INFO] Building ResNet-18 (ImageNet pretrained)...")
+    model = build_resnet18(NUM_CLASSES).to(device)
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"  Trainable parameters: {n_params:,}")
 
-    # ── Loss & Optimizer ───────────────────────────────────────────────────────
-    # Class weights to handle xBD imbalance (more weight on rare damage classes)
+    # ── Loss, Optimizer, Scheduler ─────────────────────────────────────────────
+    # Upweight rare damage classes to counter xBD class imbalance
     class_weights = torch.tensor([0.5, 1.5, 2.0, 2.5], device=device)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    optimizer = torch.optim.AdamW(model.parameters(),
+                                  lr=args.lr, weight_decay=args.weight_decay)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=args.epochs, eta_min=1e-6
+    )
 
     # ── Training Loop ──────────────────────────────────────────────────────────
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 62)
     print("  Starting Training")
-    print("=" * 60)
+    print("=" * 62)
 
-    best_val_acc = 0.0
     os.makedirs(Path(args.save_path).parent, exist_ok=True)
-    training_start = time.time()
-
+    best_val_acc = 0.0
     history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
+    t_start = time.time()
 
     for epoch in range(1, args.epochs + 1):
-        epoch_start = time.time()
-        print(f"\n{'─'*60}")
-        print(f"  Epoch {epoch}/{args.epochs}  (LR={scheduler.get_last_lr()[0]:.2e})")
-        print(f"{'─'*60}")
+        t_epoch = time.time()
+        current_lr = scheduler.get_last_lr()[0]
+        print(f"\n{'─' * 62}")
+        print(f"  Epoch {epoch}/{args.epochs}   LR={current_lr:.2e}")
+        print(f"{'─' * 62}")
 
-        # Train
         train_loss, train_acc = train_one_epoch(
-            model, train_loader, optimizer, criterion, device, epoch
+            model, train_loader, optimizer, criterion, device
         )
-
-        # Validate
-        val_loss, val_acc, per_class_acc = evaluate(model, val_loader, criterion, device)
-
+        val_loss, val_acc, per_class = evaluate(
+            model, val_loader, criterion, device
+        )
         scheduler.step()
-        epoch_time = time.time() - epoch_start
 
-        # Log
         history["train_loss"].append(train_loss)
         history["train_acc"].append(train_acc)
         history["val_loss"].append(val_loss)
         history["val_acc"].append(val_acc)
 
-        print(f"\n  ✓ Epoch {epoch:2d} Summary  [{epoch_time:.0f}s]")
-        print(f"    Train  →  loss={train_loss:.4f}  acc={train_acc:.4f} ({train_acc*100:.1f}%)")
-        print(f"    Val    →  loss={val_loss:.4f}  acc={val_acc:.4f} ({val_acc*100:.1f}%)")
+        elapsed = time.time() - t_epoch
+        print(f"\n  ✓ Epoch {epoch:2d}  [{elapsed:.0f}s]")
+        print(f"    Train  loss={train_loss:.4f}  acc={train_acc:.4f} ({train_acc*100:.1f}%)")
+        print(f"    Val    loss={val_loss:.4f}  acc={val_acc:.4f} ({val_acc*100:.1f}%)")
         print(f"    Per-class val accuracy:")
-        for cls_name, acc in per_class_acc.items():
+        for cls_name, acc in per_class.items():
             bar = "█" * int(acc * 20)
             print(f"      {cls_name:<15} {acc:.3f}  {bar}")
 
-        # Save best model
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             torch.save({
@@ -369,29 +380,30 @@ def main():
                 "val_loss": val_loss,
                 "train_acc": train_acc,
                 "train_loss": train_loss,
+                "history": history,
                 "args": vars(args),
                 "class_names": DAMAGE_CLASSES,
             }, args.save_path)
-            print(f"    ★ New best! Saved to {args.save_path}")
+            print(f"    ★ New best val acc — checkpoint saved to {args.save_path}")
 
     # ── Final Summary ──────────────────────────────────────────────────────────
-    total_time = time.time() - training_start
-    print("\n" + "=" * 60)
-    print("  Training Complete!")
-    print("=" * 60)
-    print(f"  Total time      : {total_time/60:.1f} minutes")
-    print(f"  Best val acc    : {best_val_acc:.4f} ({best_val_acc*100:.1f}%)")
-    print(f"  Model saved to  : {args.save_path}")
+    total_min = (time.time() - t_start) / 60
+    print("\n" + "=" * 62)
+    print("  Training Complete")
+    print("=" * 62)
+    print(f"  Total time   : {total_min:.1f} min")
+    print(f"  Best val acc : {best_val_acc:.4f} ({best_val_acc*100:.1f}%)")
+    print(f"  Checkpoint   : {args.save_path}")
     print()
-    print("  Epoch History:")
     print(f"  {'Epoch':>5}  {'Train Loss':>10}  {'Train Acc':>9}  {'Val Loss':>8}  {'Val Acc':>7}")
     print(f"  {'─'*5}  {'─'*10}  {'─'*9}  {'─'*8}  {'─'*7}")
     for i in range(args.epochs):
+        marker = " ★" if history["val_acc"][i] == best_val_acc else ""
         print(f"  {i+1:>5}  {history['train_loss'][i]:>10.4f}  "
               f"{history['train_acc'][i]:>9.4f}  "
               f"{history['val_loss'][i]:>8.4f}  "
-              f"{history['val_acc'][i]:>7.4f}")
-    print("=" * 60)
+              f"{history['val_acc'][i]:>7.4f}{marker}")
+    print("=" * 62)
 
 
 if __name__ == "__main__":
