@@ -63,3 +63,8 @@ logs/
 # Temporary files
 *.tmp
 *.bak
+
+# Documents / reports (not for version control)
+*.pdf
+*.pptx
+*.docx
