@@ -1,1 +1,0 @@
-# Prithvi foundation model wrappers
