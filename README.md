@@ -5,6 +5,8 @@
 **Mulya S. Patel · Vivek K. Vanera · Sakhi T. Patel**  
 *North Carolina State University · Advanced Topics in Machine Learning · Spring 2026*
 
+![F1 Score](https://img.shields.io/badge/Overall_F1-0.8136-brightgreen) ![Loc F1](https://img.shields.io/badge/Localization_F1-0.8752-brightgreen) ![Dataset](https://img.shields.io/badge/Dataset-xBD-blue) ![Framework](https://img.shields.io/badge/Framework-PyTorch-orange) ![Institution](https://img.shields.io/badge/Institution-NC_State-red)
+
 ---
 
 ## Overview
@@ -28,7 +30,9 @@ We address this with a **two-phase pipeline**:
 | xView2 First-Place (42-model ensemble) | 0.8112 | 0.7887 | 0.8635 |
 | ChangeOS | 0.7857 | 0.7564 | 0.8541 |
 | DamFormer | 0.7702 | 0.7281 | 0.7281 |
-| **Ours — JointDamageNet (single model)** | **0.8136** | **0.7873** | **0.8752** |
+| **Ours — JointDamageNet (single model)†** | **0.8136** | **0.7873** | **0.8752** |
+
+*† Single model. All other methods use ensembles or are evaluated under identical hold-split conditions.*
 
 Our single model achieves the **highest localization F1 (0.8752)** of all compared methods and a **minor-damage F1 of 0.589** — more than double DisasterAdaptiveNet's 0.253 on the same evaluation split.
 
@@ -75,6 +79,16 @@ Post-disaster image ──┘                               └──► High-le
 1. **Asymmetric fusion** — localization uses `cat(pre, post)`; damage additionally receives the explicit change signal `post − pre`, compressed back to 2× width via a learned 1×1 conv.
 2. **Ordinal loss (EMD)** — Earth Mover's Distance penalizes predictions proportional to their distance from the true class on the ordinal damage scale.
 3. **Two-level imbalance correction** — `WeightedRandomSampler` (minority-damage tiles upsampled 3×) combined with per-pixel inverse-frequency class weights in the Focal Loss.
+
+---
+
+## 🔑 Key Technical Contributions
+
+1. **Phase-transfer learning** — encoder weights from Phase 1 building localization directly initialize Phase 2 damage classification, enabling faster convergence and better feature reuse.
+2. **Asymmetric dual-branch fusion** — localization head uses `cat(pre, post)`; damage head additionally receives the explicit change signal `post − pre` compressed via a learned 1×1 conv, letting each task access the information it needs.
+3. **Ordinal EMD loss** — Earth Mover's Distance penalizes damage misclassifications proportionally to their ordinal distance, reflecting the real cost of confusing "No Damage" with "Destroyed."
+4. **Two-level class imbalance handling** — `WeightedRandomSampler` upsamples minority-damage tiles 3× at the batch level; per-pixel inverse-frequency weights in Focal Loss address imbalance within each tile.
+5. **Systematic ablation** — five experiments (expA→expE) isolate the contribution of each design choice, following standard ML research methodology.
 
 ---
 
@@ -175,6 +189,22 @@ The xView2 gap (0.023) is explained by training 12 backbone models instead of 42
 | Mulya S. Patel | mspate22@ncsu.edu |
 | Vivek K. Vanera | vvanera@ncsu.edu |
 | Sakhi T. Patel | stpatel14@ncsu.edu |
+
+---
+
+## 📄 Citation
+
+If you use this work, please cite:
+```bibtex
+@misc{patel2026disasterdamage,
+  title  = {JointDamageNet: A Two-Phase Pipeline for Satellite Imagery
+             Disaster Damage Detection},
+  author = {Patel, Mulya S. and Vanera, Vivek K. and Patel, Sakhi T.},
+  year   = {2026},
+  note   = {NC State University, Advanced Topics in Machine Learning}
+}
+```
+> **Note:** An arXiv preprint is in preparation.
 
 ---
 
